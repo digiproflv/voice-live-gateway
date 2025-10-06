@@ -2,22 +2,27 @@ import express from "express";
 import WebSocket from "ws";
 import dotenv from "dotenv";
 import fs from "fs";
+import { randomUUID } from "crypto";
 
 dotenv.config();
 
-console.log("ENV CHECK:", {
-  AZURE_VOICE_KEY: !!process.env.AZURE_VOICE_KEY,
-  AZURE_REGION: process.env.AZURE_REGION,
-  VOICE_MODEL: process.env.VOICE_MODEL,
-  VOICE_NAME: process.env.VOICE_NAME,
+const app = express();
+app.use(express.json());
+
+const port = process.env.PORT || 3000;
+
+// ✅ Veselības pārbaude
+app.get("/", (req, res) => {
+  res.send("🎙️ Voice Live Gateway darbojas! Izmanto POST /speak ar JSON { text: '...' }");
 });
 
-const app = express();
-const port = process.env.PORT || 3000;
-app.get("/", (req, res) => res.send("🎙️ Microsoft Voice Live Gateway darbojas!"));
-app.listen(port, () => console.log(`Serveris darbojas uz porta ${port}`));
+// ✅ API: POST /speak
+app.post("/speak", async (req, res) => {
+  const { text } = req.body;
+  if (!text) return res.status(400).json({ error: "Trūkst parametra 'text'" });
 
-async function startVoiceSession() {
+  console.log(`🗣️ Pieprasījums: ${text}`);
+
   const wsUrl = `wss://${process.env.AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/websocket/v1?TrafficType=VoiceLive`;
 
   const ws = new WebSocket(wsUrl, {
@@ -26,46 +31,77 @@ async function startVoiceSession() {
     },
   });
 
+  const audioFile = `/tmp/${randomUUID()}.wav`;
+  let completed = false;
+
   ws.on("open", () => {
     console.log("✅ Savienots ar Microsoft Speech (Voice Live)");
 
-    const session = {
-      type: "session.update",
-      session: {
-        voice: process.env.VOICE_NAME,
-        speech_recognition_language: "lv-LV",
-        instructions:
-          "Tu esi draudzīgs latviešu balss asistents. Atbildi īsi un skaidri latviešu valodā.",
-      },
-    };
-    ws.send(JSON.stringify(session));
+    // Sesijas konfigurācija
+    ws.send(
+      JSON.stringify({
+        type: "session.update",
+        session: {
+          voice: process.env.VOICE_NAME || "lv-LV-EveritaNeural",
+          speech_recognition_language: "lv-LV",
+          instructions:
+            "Tu esi draudzīgs balss asistents. Runā īsi un saprotami latviešu valodā.",
+        },
+      })
+    );
 
-    const input = {
-      type: "response.create",
-      response: {
-        modalities: ["text", "audio"],
-        instructions: "Sveiks! Kā tev šodien klājas?",
-      },
-    };
-    ws.send(JSON.stringify(input));
+    // Nosūtām tekstu, ko pārvērst balsī
+    setTimeout(() => {
+      ws.send(
+        JSON.stringify({
+          type: "response.create",
+          response: {
+            modalities: ["text", "audio"],
+            instructions: text,
+          },
+        })
+      );
+    }, 500);
   });
 
   ws.on("message", (msg) => {
     const data = JSON.parse(msg);
 
     if (data.type === "response.text.delta") process.stdout.write(data.delta);
-
-    if (data.type === "response.audio.delta")
-      fs.appendFileSync("response_audio.wav", Buffer.from(data.delta, "base64"));
+    if (data.type === "response.audio.delta") {
+      fs.appendFileSync(audioFile, Buffer.from(data.delta, "base64"));
+    }
 
     if (data.type === "response.completed") {
-      console.log("\n🗣️ Balss atbilde pabeigta → response_audio.wav");
-      ws.close();
+      completed = true;
+      console.log("\n🗣️ Balss atbilde pabeigta →", audioFile);
+
+      // Atgriežam WAV straumi atbildē
+      res.setHeader("Content-Type", "audio/wav");
+      const stream = fs.createReadStream(audioFile);
+      stream.pipe(res);
+      stream.on("end", () => {
+        ws.close();
+        fs.unlink(audioFile, () => {}); // dzēšam pagaidu failu
+      });
     }
   });
 
-  ws.on("close", () => console.log("🔒 Voice Live sesija aizvērta"));
-  ws.on("error", (err) => console.error("❌ Kļūda:", err.message));
-}
+  ws.on("close", () => {
+    if (!completed) {
+      console.log("⚠️ Voice Live sesija aizvērta pirms audio ģenerēšanas");
+      if (!res.headersSent)
+        res.status(500).json({ error: "Sesija aizvērta pirms audio ģenerēšanas" });
+    }
+  });
 
-startVoiceSession();
+  ws.on("error", (err) => {
+    console.error("❌ Kļūda:", err.message);
+    if (!res.headersSent)
+      res.status(500).json({ error: "Savienojuma kļūda ar Microsoft Speech" });
+  });
+});
+
+app.listen(port, () => {
+  console.log(`Serveris darbojas uz porta ${port}`);
+});
