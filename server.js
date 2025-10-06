@@ -1,7 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import fs from "fs";
-import fetch from "node-fetch";
+
 
 dotenv.config();
 const app = express();
@@ -61,3 +61,4 @@ app.post("/tts", async (req, res) => {
 });
 
 app.listen(port, () => console.log(`Serveris darbojas uz porta ${port}`));
+
