@@ -5,6 +5,13 @@ import fs from "fs";
 
 dotenv.config();
 
+console.log("ENV CHECK:", {
+  AZURE_VOICE_KEY: !!process.env.AZURE_VOICE_KEY,
+  AZURE_REGION: process.env.AZURE_REGION,
+  VOICE_MODEL: process.env.VOICE_MODEL,
+  VOICE_NAME: process.env.VOICE_NAME,
+});
+
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -78,3 +85,4 @@ async function startVoiceSession() {
 
 // Automātiski startē sesiju
 startVoiceSession();
+
