@@ -26,7 +26,7 @@ app.listen(port, () => console.log(`Serveris darbojas uz porta ${port}`));
 // =========================
 
 async function startVoiceSession() {
-  const wsUrl = `wss://api.voice.live.microsoft.com/v1/realtime?model=${process.env.VOICE_MODEL}`;
+  const wsUrl = `wss://northeurope.tts.speech.microsoft.com/cognitiveservices/websocket/v1?TrafficType=VoiceLive`;
 
   const ws = new WebSocket(wsUrl, {
     headers: {
@@ -85,4 +85,5 @@ async function startVoiceSession() {
 
 // Automātiski startē sesiju
 startVoiceSession();
+
 
