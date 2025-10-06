@@ -14,31 +14,21 @@ console.log("ENV CHECK:", {
 
 const app = express();
 const port = process.env.PORT || 3000;
-
-app.get("/", (req, res) => {
-  res.send("🎙️ Microsoft Voice Live Gateway darbojas! Pārbaudi konsoli.");
-});
-
+app.get("/", (req, res) => res.send("🎙️ Microsoft Voice Live Gateway darbojas!"));
 app.listen(port, () => console.log(`Serveris darbojas uz porta ${port}`));
 
-// =========================
-// Voice Live API Sesija
-// =========================
-
 async function startVoiceSession() {
-  const wsUrl = `wss://northeurope.tts.speech.microsoft.com/cognitiveservices/websocket/v1?TrafficType=VoiceLive`;
+  const wsUrl = `wss://${process.env.AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/websocket/v1?TrafficType=VoiceLive`;
 
   const ws = new WebSocket(wsUrl, {
     headers: {
-      Authorization: `Bearer ${process.env.AZURE_VOICE_KEY}`,
-      "x-ms-region": process.env.AZURE_REGION,
+      "Ocp-Apim-Subscription-Key": process.env.AZURE_VOICE_KEY,
     },
   });
 
   ws.on("open", () => {
-    console.log("✅ Savienots ar Microsoft Voice Live API");
+    console.log("✅ Savienots ar Microsoft Speech (Voice Live)");
 
-    // Konfigurācija
     const session = {
       type: "session.update",
       session: {
@@ -50,7 +40,6 @@ async function startVoiceSession() {
     };
     ws.send(JSON.stringify(session));
 
-    // Izveidojām testa jautājumu
     const input = {
       type: "response.create",
       response: {
@@ -61,17 +50,13 @@ async function startVoiceSession() {
     ws.send(JSON.stringify(input));
   });
 
-  // Datu apstrāde
   ws.on("message", (msg) => {
     const data = JSON.parse(msg);
 
-    if (data.type === "response.text.delta") {
-      process.stdout.write(data.delta);
-    }
+    if (data.type === "response.text.delta") process.stdout.write(data.delta);
 
-    if (data.type === "response.audio.delta") {
+    if (data.type === "response.audio.delta")
       fs.appendFileSync("response_audio.wav", Buffer.from(data.delta, "base64"));
-    }
 
     if (data.type === "response.completed") {
       console.log("\n🗣️ Balss atbilde pabeigta → response_audio.wav");
@@ -83,7 +68,4 @@ async function startVoiceSession() {
   ws.on("error", (err) => console.error("❌ Kļūda:", err.message));
 }
 
-// Automātiski startē sesiju
 startVoiceSession();
-
-
