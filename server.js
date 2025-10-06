@@ -1,11 +1,9 @@
 import express from "express";
-import WebSocket from "ws";
 import dotenv from "dotenv";
 import fs from "fs";
-import { randomUUID } from "crypto";
+import fetch from "node-fetch";
 
 dotenv.config();
-
 const app = express();
 app.use(express.json());
 
@@ -13,95 +11,53 @@ const port = process.env.PORT || 3000;
 
 // ✅ Veselības pārbaude
 app.get("/", (req, res) => {
-  res.send("🎙️ Voice Live Gateway darbojas! Izmanto POST /speak ar JSON { text: '...' }");
+  res.send("🎙️ Azure Speech TTS Gateway darbojas! Izmanto POST /tts ar JSON { text: '...' }");
 });
 
-// ✅ API: POST /speak
-app.post("/speak", async (req, res) => {
+// ✅ Azure TTS (klasiskais REST API)
+app.post("/tts", async (req, res) => {
   const { text } = req.body;
   if (!text) return res.status(400).json({ error: "Trūkst parametra 'text'" });
 
-  console.log(`🗣️ Pieprasījums: ${text}`);
+  console.log("🗣️ Teksts:", text);
 
-  const wsUrl = `wss://${process.env.AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/websocket/v1?TrafficType=VoiceLive`;
+  try {
+    const url = `https://${process.env.AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/v1`;
+    const ssml = `
+      <speak version='1.0' xml:lang='lv-LV'>
+        <voice name='${process.env.VOICE_NAME || "lv-LV-EveritaNeural"}'>
+          ${text}
+        </voice>
+      </speak>`;
 
-  const ws = new WebSocket(wsUrl, {
-    headers: {
-      "Ocp-Apim-Subscription-Key": process.env.AZURE_VOICE_KEY,
-    },
-  });
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Ocp-Apim-Subscription-Key": process.env.AZURE_VOICE_KEY,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": "riff-16khz-16bit-mono-pcm",
+      },
+      body: ssml,
+    });
 
-  const audioFile = `/tmp/${randomUUID()}.wav`;
-  let completed = false;
-
-  ws.on("open", () => {
-    console.log("✅ Savienots ar Microsoft Speech (Voice Live)");
-
-    // Sesijas konfigurācija
-    ws.send(
-      JSON.stringify({
-        type: "session.update",
-        session: {
-          voice: process.env.VOICE_NAME || "lv-LV-EveritaNeural",
-          speech_recognition_language: "lv-LV",
-          instructions:
-            "Tu esi draudzīgs balss asistents. Runā īsi un saprotami latviešu valodā.",
-        },
-      })
-    );
-
-    // Nosūtām tekstu, ko pārvērst balsī
-    setTimeout(() => {
-      ws.send(
-        JSON.stringify({
-          type: "response.create",
-          response: {
-            modalities: ["text", "audio"],
-            instructions: text,
-          },
-        })
-      );
-    }, 500);
-  });
-
-  ws.on("message", (msg) => {
-    const data = JSON.parse(msg);
-
-    if (data.type === "response.text.delta") process.stdout.write(data.delta);
-    if (data.type === "response.audio.delta") {
-      fs.appendFileSync(audioFile, Buffer.from(data.delta, "base64"));
+    if (!response.ok) {
+      const err = await response.text();
+      console.error("❌ Kļūda:", err);
+      return res.status(500).json({ error: "Azure TTS kļūda", details: err });
     }
 
-    if (data.type === "response.completed") {
-      completed = true;
-      console.log("\n🗣️ Balss atbilde pabeigta →", audioFile);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const fileName = "speech.wav";
+    fs.writeFileSync(fileName, buffer);
 
-      // Atgriežam WAV straumi atbildē
-      res.setHeader("Content-Type", "audio/wav");
-      const stream = fs.createReadStream(audioFile);
-      stream.pipe(res);
-      stream.on("end", () => {
-        ws.close();
-        fs.unlink(audioFile, () => {}); // dzēšam pagaidu failu
-      });
-    }
-  });
+    console.log("✅ Audio ģenerēts →", fileName);
 
-  ws.on("close", () => {
-    if (!completed) {
-      console.log("⚠️ Voice Live sesija aizvērta pirms audio ģenerēšanas");
-      if (!res.headersSent)
-        res.status(500).json({ error: "Sesija aizvērta pirms audio ģenerēšanas" });
-    }
-  });
-
-  ws.on("error", (err) => {
-    console.error("❌ Kļūda:", err.message);
-    if (!res.headersSent)
-      res.status(500).json({ error: "Savienojuma kļūda ar Microsoft Speech" });
-  });
+    res.setHeader("Content-Type", "audio/wav");
+    res.send(buffer);
+  } catch (err) {
+    console.error("❌ Izpildes kļūda:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.listen(port, () => {
-  console.log(`Serveris darbojas uz porta ${port}`);
-});
+app.listen(port, () => console.log(`Serveris darbojas uz porta ${port}`));
